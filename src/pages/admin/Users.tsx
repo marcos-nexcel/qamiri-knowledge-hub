@@ -65,27 +65,50 @@ export const AdminUsers = () => {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { data, error } = await supabase
+      // Crear usuario en Supabase Auth (esto automáticamente creará el perfil)
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email: formData.email,
+        password: `temp_${Math.random().toString(36).substring(7)}`, // Password temporal
+        email_confirm: true, // Confirmar email automáticamente
+        user_metadata: {
+          full_name: formData.full_name,
+        }
+      });
+
+      if (authError) throw authError;
+      
+      if (!authData.user) {
+        throw new Error('No se pudo crear el usuario');
+      }
+
+      // Actualizar el perfil con el rol y estado
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .insert([{ ...formData, id: crypto.randomUUID() }])
+        .update({
+          role: formData.role,
+          is_active: formData.is_active,
+          full_name: formData.full_name
+        })
+        .eq('id', authData.user.id)
         .select()
         .single();
 
-      if (error) throw error;
+      if (profileError) throw profileError;
 
-      setUsers([data, ...users]);
+      // Agregar el nuevo usuario a la lista
+      setUsers([profileData, ...users]);
       setShowCreateDialog(false);
       setFormData({ email: '', full_name: '', role: 'user', is_active: true });
       
       toast({
         title: 'Usuario creado',
-        description: 'El usuario ha sido creado exitosamente',
+        description: 'El usuario ha sido creado exitosamente. Se envió un email de activación.',
       });
     } catch (error) {
       console.error('Error creating user:', error);
       toast({
         title: 'Error',
-        description: 'No se pudo crear el usuario',
+        description: error instanceof Error ? error.message : 'No se pudo crear el usuario',
         variant: 'destructive',
       });
     }
