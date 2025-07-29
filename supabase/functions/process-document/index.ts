@@ -142,14 +142,24 @@ serve(async (req) => {
 // Helper function to split text into chunks
 function splitTextIntoChunks(text: string, chunkSize: number, overlap: number): string[] {
   const chunks: string[] = [];
+  
+  // Clean the text to remove null characters and other problematic characters
+  const cleanText = text
+    .replace(/\u0000/g, '') // Remove null characters
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove other control characters
+    .trim();
+  
   let start = 0;
 
-  while (start < text.length) {
-    const end = Math.min(start + chunkSize, text.length);
-    const chunk = text.slice(start, end);
-    chunks.push(chunk);
+  while (start < cleanText.length) {
+    const end = Math.min(start + chunkSize, cleanText.length);
+    const chunk = cleanText.slice(start, end).trim();
     
-    if (end === text.length) break;
+    if (chunk.length > 0) {
+      chunks.push(chunk);
+    }
+    
+    if (end === cleanText.length) break;
     start = end - overlap;
   }
 
