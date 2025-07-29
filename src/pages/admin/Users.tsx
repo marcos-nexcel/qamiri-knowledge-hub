@@ -417,7 +417,7 @@ export const AdminUsers = () => {
                           variant="outline"
                           size="sm"
                           onClick={() => handleResendActivation(user)}
-                          className="text-admin-primary hover:text-admin-primary"
+                          className="text-admin-primary hover:text-admin-secondary"
                         >
                           Reenviar
                         </Button>
