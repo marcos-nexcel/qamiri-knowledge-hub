@@ -174,7 +174,13 @@ export const AdminUsers = () => {
     }
 
     try {
-      // Eliminar el perfil
+      // Primero limpiar tokens de activación relacionados
+      await supabase
+        .from('user_activation_tokens')
+        .delete()
+        .eq('user_id', userId);
+
+      // Luego eliminar el perfil
       const { error } = await supabase
         .from('profiles')
         .delete()
@@ -182,14 +188,8 @@ export const AdminUsers = () => {
 
       if (error) throw error;
 
-      // Limpiar tokens de activación relacionados
-      await supabase
-        .from('user_activation_tokens')
-        .delete()
-        .eq('user_id', userId);
-
-      // Actualizar lista local
-      setUsers(users.filter(user => user.id !== userId));
+      // Actualizar lista local inmediatamente
+      setUsers(prevUsers => prevUsers.filter(user => user.id !== userId));
       
       toast({
         title: 'Usuario eliminado',
