@@ -65,44 +65,30 @@ export const AdminUsers = () => {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Crear usuario en Supabase Auth (esto automáticamente creará el perfil)
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email: formData.email,
-        password: `temp_${Math.random().toString(36).substring(7)}`, // Password temporal
-        email_confirm: true, // Confirmar email automáticamente
-        user_metadata: {
-          full_name: formData.full_name,
-        }
-      });
-
-      if (authError) throw authError;
+      // Crear perfil directamente (usuario pendiente de registro)
+      const newUserId = crypto.randomUUID();
       
-      if (!authData.user) {
-        throw new Error('No se pudo crear el usuario');
-      }
-
-      // Actualizar el perfil con el rol y estado
-      const { data: profileData, error: profileError } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
-        .update({
+        .insert([{
+          id: newUserId,
+          email: formData.email,
+          full_name: formData.full_name,
           role: formData.role,
-          is_active: formData.is_active,
-          full_name: formData.full_name
-        })
-        .eq('id', authData.user.id)
+          is_active: formData.is_active
+        }])
         .select()
         .single();
 
-      if (profileError) throw profileError;
+      if (error) throw error;
 
-      // Agregar el nuevo usuario a la lista
-      setUsers([profileData, ...users]);
+      setUsers([data, ...users]);
       setShowCreateDialog(false);
       setFormData({ email: '', full_name: '', role: 'user', is_active: true });
       
       toast({
         title: 'Usuario creado',
-        description: 'El usuario ha sido creado exitosamente. Se envió un email de activación.',
+        description: 'Usuario creado como perfil pendiente. Podrá activarse cuando se registre con este email.',
       });
     } catch (error) {
       console.error('Error creating user:', error);
