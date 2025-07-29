@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Upload, FileText, Search, Download, Trash2, RefreshCw } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Upload, FileText, Search, Download, Trash2, RefreshCw, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,85 +8,116 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useDocuments } from '@/hooks/useDocuments';
+import { CategorySelector } from '@/components/documents/CategorySelector';
+import { toast } from 'sonner';
 
 export const AdminDocuments = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all');
+  const [selectedUploadCategory, setSelectedUploadCategory] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const {
+    documents,
+    categories,
+    loading,
+    uploading,
+    uploadProgress,
+    uploadDocument,
+    deleteDocument,
+    reprocessDocument,
+    downloadDocument,
+    refreshData
+  } = useDocuments();
 
-  // Mock data - esto se conectaría con la base de datos real
-  const documents = [
-    {
-      id: '1',
-      name: 'Manual de Procedimientos.pdf',
-      category: 'Procedimientos',
-      size: '2.5 MB',
-      type: 'PDF',
-      uploadedAt: '2024-01-15',
-      status: 'processed',
-      chunks: 25,
-    },
-    {
-      id: '2',
-      name: 'Políticas de Seguridad.docx',
-      category: 'Seguridad',
-      size: '1.8 MB',
-      type: 'DOCX',
-      uploadedAt: '2024-01-14',
-      status: 'processing',
-      chunks: 18,
-    },
-    {
-      id: '3',
-      name: 'Reporte Financiero Q4.xlsx',
-      category: 'Finanzas',
-      size: '3.2 MB',
-      type: 'XLSX',
-      uploadedAt: '2024-01-13',
-      status: 'processed',
-      chunks: 42,
-    },
-  ];
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
 
-    setIsUploading(true);
-    setUploadProgress(0);
+    if (!selectedUploadCategory) {
+      toast.error('Por favor selecciona una categoría');
+      return;
+    }
 
-    // Simular progreso de carga
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsUploading(false);
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 200);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      await uploadDocument(file, selectedUploadCategory);
+    }
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files);
+    
+    if (!selectedUploadCategory) {
+      toast.error('Por favor selecciona una categoría');
+      return;
+    }
+
+    for (const file of files) {
+      await uploadDocument(file, selectedUploadCategory);
+    }
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'processed':
-        return <Badge className="bg-green-500 text-white">Procesado</Badge>;
+        return (
+          <Badge className="bg-green-500 text-white">
+            <CheckCircle className="h-3 w-3 mr-1" />
+            Procesado
+          </Badge>
+        );
       case 'processing':
-        return <Badge className="bg-yellow-500 text-white">Procesando</Badge>;
+        return (
+          <Badge className="bg-yellow-500 text-white">
+            <Clock className="h-3 w-3 mr-1" />
+            Procesando
+          </Badge>
+        );
       case 'error':
-        return <Badge variant="destructive">Error</Badge>;
+        return (
+          <Badge variant="destructive">
+            <AlertTriangle className="h-3 w-3 mr-1" />
+            Error
+          </Badge>
+        );
       default:
-        return <Badge variant="secondary">Pendiente</Badge>;
+        return (
+          <Badge variant="secondary">
+            <Clock className="h-3 w-3 mr-1" />
+            Pendiente
+          </Badge>
+        );
     }
   };
 
   const filteredDocuments = documents.filter(doc => {
     const matchesSearch = doc.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || doc.category === selectedCategory;
+    const matchesCategory = selectedCategoryFilter === 'all' || doc.category_id === selectedCategoryFilter;
     return matchesSearch && matchesCategory;
   });
+
+  const formatFileSize = (bytes: number) => {
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    if (bytes === 0) return '0 Bytes';
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  };
+
+  const totalDocuments = documents.length;
+  const processingDocuments = documents.filter(d => d.status === 'processing').length;
+  const totalStorage = documents.reduce((acc, doc) => acc + doc.file_size, 0);
 
   return (
     <div className="space-y-6">
@@ -111,22 +142,40 @@ export const AdminDocuments = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+              <CategorySelector
+                categories={categories}
+                selectedCategory={selectedUploadCategory}
+                onCategoryChange={setSelectedUploadCategory}
+                onCategoryCreated={refreshData}
+              />
+              
+              <div 
+                className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors"
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
                 <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <div className="space-y-2">
                   <h3 className="text-lg font-semibold">Arrastra archivos aquí</h3>
                   <p className="text-muted-foreground">o haz clic para seleccionar archivos</p>
                 </div>
                 <Input
+                  ref={fileInputRef}
                   type="file"
                   multiple
                   accept=".pdf,.doc,.docx,.txt,.xls,.xlsx"
                   onChange={handleFileUpload}
                   className="mt-4"
+                  disabled={!selectedUploadCategory}
                 />
+                {!selectedUploadCategory && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Selecciona una categoría para habilitar la carga
+                  </p>
+                )}
               </div>
 
-              {isUploading && (
+              {uploading && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span>Cargando documentos...</span>
@@ -140,7 +189,7 @@ export const AdminDocuments = () => {
                 <Card className="p-4">
                   <div className="text-center">
                     <FileText className="h-8 w-8 text-admin-primary mx-auto mb-2" />
-                    <div className="text-2xl font-bold">1,234</div>
+                    <div className="text-2xl font-bold">{totalDocuments}</div>
                     <div className="text-sm text-muted-foreground">Documentos Totales</div>
                   </div>
                 </Card>
@@ -148,7 +197,7 @@ export const AdminDocuments = () => {
                 <Card className="p-4">
                   <div className="text-center">
                     <RefreshCw className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
-                    <div className="text-2xl font-bold">12</div>
+                    <div className="text-2xl font-bold">{processingDocuments}</div>
                     <div className="text-sm text-muted-foreground">En Procesamiento</div>
                   </div>
                 </Card>
@@ -156,7 +205,7 @@ export const AdminDocuments = () => {
                 <Card className="p-4">
                   <div className="text-center">
                     <Download className="h-8 w-8 text-green-500 mx-auto mb-2" />
-                    <div className="text-2xl font-bold">15.6 GB</div>
+                    <div className="text-2xl font-bold">{formatFileSize(totalStorage)}</div>
                     <div className="text-sm text-muted-foreground">Almacenamiento</div>
                   </div>
                 </Card>
@@ -185,15 +234,17 @@ export const AdminDocuments = () => {
                       className="pl-10 w-64"
                     />
                   </div>
-                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <Select value={selectedCategoryFilter} onValueChange={setSelectedCategoryFilter}>
                     <SelectTrigger className="w-48">
                       <SelectValue placeholder="Filtrar por categoría" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todas las categorías</SelectItem>
-                      <SelectItem value="Procedimientos">Procedimientos</SelectItem>
-                      <SelectItem value="Seguridad">Seguridad</SelectItem>
-                      <SelectItem value="Finanzas">Finanzas</SelectItem>
+                      {categories.map((category) => (
+                        <SelectItem key={category.id} value={category.id}>
+                          {category.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -214,37 +265,72 @@ export const AdminDocuments = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredDocuments.map((doc) => (
-                    <TableRow key={doc.id}>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <FileText className="h-4 w-4 text-admin-primary" />
-                          <span className="font-medium">{doc.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{doc.category}</Badge>
-                      </TableCell>
-                      <TableCell>{doc.type}</TableCell>
-                      <TableCell>{doc.size}</TableCell>
-                      <TableCell>{getStatusBadge(doc.status)}</TableCell>
-                      <TableCell>{doc.chunks} chunks</TableCell>
-                      <TableCell>{new Date(doc.uploadedAt).toLocaleDateString()}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end space-x-2">
-                          <Button variant="outline" size="sm">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <Button variant="outline" size="sm">
-                            <RefreshCw className="h-4 w-4" />
-                          </Button>
-                          <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                  {loading ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8">
+                        Cargando documentos...
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : filteredDocuments.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8">
+                        No se encontraron documentos
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredDocuments.map((doc) => (
+                      <TableRow key={doc.id}>
+                        <TableCell>
+                          <div className="flex items-center space-x-2">
+                            <FileText className="h-4 w-4 text-admin-primary" />
+                            <span className="font-medium">{doc.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {doc.categories?.name || 'Sin categoría'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {doc.file_type.split('/').pop()?.toUpperCase() || 'Unknown'}
+                        </TableCell>
+                        <TableCell>{formatFileSize(doc.file_size)}</TableCell>
+                        <TableCell>{getStatusBadge(doc.status)}</TableCell>
+                        <TableCell>{doc.chunk_count} chunks</TableCell>
+                        <TableCell>{new Date(doc.created_at).toLocaleDateString()}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end space-x-2">
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => downloadDocument(doc.file_path, doc.name)}
+                              title="Descargar"
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => reprocessDocument(doc.id)}
+                              disabled={doc.status === 'processing'}
+                              title="Reprocesar"
+                            >
+                              <RefreshCw className={`h-4 w-4 ${doc.status === 'processing' ? 'animate-spin' : ''}`} />
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => deleteDocument(doc.id)}
+                              title="Eliminar"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
