@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -77,8 +77,8 @@ const Index = () => {
                 <p className="text-muted-foreground mb-4">
                   Gestiona usuarios, categorías, documentos y permisos.
                 </p>
-                <Button className="w-full" disabled>
-                  Próximamente
+                <Button asChild className="w-full bg-admin-primary hover:bg-admin-primary-dark text-admin-primary-foreground">
+                  <Link to="/admin">Ir al Panel</Link>
                 </Button>
               </CardContent>
             </Card>
