@@ -65,31 +65,67 @@ export const AdminUsers = () => {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Crear perfil directamente (usuario pendiente de registro)
+      // Crear perfil de usuario
       const newUserId = crypto.randomUUID();
       
-      const { data, error } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .insert([{
           id: newUserId,
           email: formData.email,
           full_name: formData.full_name,
           role: formData.role,
-          is_active: formData.is_active
+          is_active: false // Inactivo hasta que se active
         }])
         .select()
         .single();
 
-      if (error) throw error;
+      if (profileError) throw profileError;
 
-      setUsers([data, ...users]);
+      // Generar token de activación
+      const activationToken = crypto.randomUUID() + '-' + crypto.randomUUID();
+      
+      const { error: tokenError } = await supabase
+        .from('user_activation_tokens')
+        .insert([{
+          user_id: newUserId,
+          token: activationToken,
+        }]);
+
+      if (tokenError) throw tokenError;
+
+      // Enviar email de activación
+      const activationUrl = `${window.location.origin}/activate/${activationToken}`;
+      
+      const emailResponse = await supabase.functions.invoke('send-user-activation', {
+        body: {
+          email: formData.email,
+          fullName: formData.full_name,
+          activationToken,
+          activationUrl,
+        }
+      });
+
+      if (emailResponse.error) {
+        console.error('Error sending email:', emailResponse.error);
+        // No falla completamente, solo notifica
+        toast({
+          title: 'Usuario creado',
+          description: 'Usuario creado, pero hubo un problema enviando el email de activación.',
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: 'Usuario creado',
+          description: 'Usuario creado exitosamente. Se envió email de activación.',
+        });
+      }
+
+      // Actualizar lista local
+      setUsers([profileData, ...users]);
       setShowCreateDialog(false);
       setFormData({ email: '', full_name: '', role: 'user', is_active: true });
       
-      toast({
-        title: 'Usuario creado',
-        description: 'Usuario creado como perfil pendiente. Podrá activarse cuando se registre con este email.',
-      });
     } catch (error) {
       console.error('Error creating user:', error);
       toast({
@@ -127,6 +163,85 @@ export const AdminUsers = () => {
       toast({
         title: 'Error',
         description: 'No se pudo actualizar el usuario',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, userEmail: string) => {
+    if (!confirm(`¿Estás seguro de que quieres eliminar al usuario ${userEmail}?`)) {
+      return;
+    }
+
+    try {
+      // Eliminar el perfil
+      const { error } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', userId);
+
+      if (error) throw error;
+
+      // Limpiar tokens de activación relacionados
+      await supabase
+        .from('user_activation_tokens')
+        .delete()
+        .eq('user_id', userId);
+
+      // Actualizar lista local
+      setUsers(users.filter(user => user.id !== userId));
+      
+      toast({
+        title: 'Usuario eliminado',
+        description: 'El usuario ha sido eliminado exitosamente',
+      });
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      toast({
+        title: 'Error',
+        description: 'No se pudo eliminar el usuario',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleResendActivation = async (user: UserProfile) => {
+    try {
+      // Generar nuevo token de activación
+      const activationToken = crypto.randomUUID() + '-' + crypto.randomUUID();
+      
+      const { error: tokenError } = await supabase
+        .from('user_activation_tokens')
+        .insert([{
+          user_id: user.id,
+          token: activationToken,
+        }]);
+
+      if (tokenError) throw tokenError;
+
+      // Enviar email de activación
+      const activationUrl = `${window.location.origin}/activate/${activationToken}`;
+      
+      const emailResponse = await supabase.functions.invoke('send-user-activation', {
+        body: {
+          email: user.email,
+          fullName: user.full_name,
+          activationToken,
+          activationUrl,
+        }
+      });
+
+      if (emailResponse.error) throw emailResponse.error;
+
+      toast({
+        title: 'Email enviado',
+        description: 'Se envió un nuevo email de activación al usuario',
+      });
+    } catch (error) {
+      console.error('Error resending activation:', error);
+      toast({
+        title: 'Error',
+        description: 'No se pudo enviar el email de activación',
         variant: 'destructive',
       });
     }
@@ -296,6 +411,24 @@ export const AdminUsers = () => {
                         onClick={() => handleEditUser(user)}
                       >
                         <Edit2 className="h-4 w-4" />
+                      </Button>
+                      {!user.is_active && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleResendActivation(user)}
+                          className="text-admin-primary hover:text-admin-primary"
+                        >
+                          Reenviar
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDeleteUser(user.id, user.email)}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </TableCell>

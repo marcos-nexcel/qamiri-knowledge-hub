@@ -11,6 +11,7 @@ import { AdminCategories } from "@/pages/admin/Categories";
 import { AdminDocuments } from "@/pages/admin/Documents";
 import { AdminMetrics } from "@/pages/admin/Metrics";
 import { AdminSystem } from "@/pages/admin/System";
+import { UserActivation } from "@/pages/UserActivation";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -28,6 +29,7 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/auth" element={<Auth />} />
+              <Route path="/activate/:token" element={<UserActivation />} />
               
               {/* Admin Routes */}
               <Route path="/admin" element={<AdminLayout><AdminDashboard /></AdminLayout>} />
