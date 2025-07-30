@@ -63,8 +63,8 @@ serve(async (req) => {
       'search_similar_documents',
       {
         query_embedding: queryEmbedding,
-        match_threshold: 0.5, // Lowered threshold from 0.7 to 0.5
-        match_count: 10, // Increased from 5 to 10
+        match_threshold: 0.3, // Reduced significantly from 0.5 to 0.3
+        match_count: 15, // Increased from 10 to 15
         category_filter: categoryId
       }
     );
@@ -75,6 +75,36 @@ serve(async (req) => {
     }
 
     console.log(`Found ${searchResults?.length || 0} relevant documents`);
+    
+    // Debug: Log search results details
+    if (searchResults && searchResults.length > 0) {
+      console.log('Search results:', searchResults.map(r => ({
+        doc: r.document_name,
+        similarity: r.similarity,
+        contentPreview: r.chunk_content?.substring(0, 100)
+      })));
+    } else {
+      console.log('No search results found. Debug info:');
+      console.log('- Query embedding length:', queryEmbedding.length);
+      console.log('- Category ID:', categoryId);
+      
+      // Check if there are any chunks for this category
+      const { data: debugChunks, error: debugError } = await supabase
+        .from('document_chunks')
+        .select(`
+          id,
+          content,
+          document_id,
+          documents!inner(category_id, name, status)
+        `)
+        .eq('documents.category_id', categoryId)
+        .limit(2);
+      
+      console.log('Available chunks in category:', debugChunks?.length || 0);
+      if (debugChunks && debugChunks.length > 0) {
+        console.log('Sample chunk content:', debugChunks[0].content.substring(0, 100));
+      }
+    }
 
     // Prepare context from search results
     let context = '';

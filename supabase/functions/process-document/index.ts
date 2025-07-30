@@ -269,43 +269,70 @@ async function extractText(blob: Blob, mime: string): Promise<string> {
   }
 }
 
-// ── PDF (método simplificado sin PDF.js) ────────────────────────────────────
+// ── PDF (método completamente nuevo sin bibliotecas externas) ──────────────
 async function extractPdf(blob: Blob): Promise<string> {
   try {
-    console.log("Attempting PDF text extraction...");
+    console.log("Attempting simple PDF text extraction...");
     
     const arrayBuffer = await blob.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
-    const text = new TextDecoder('latin1').decode(uint8Array);
     
-    // Buscar objetos de texto en PDF usando patrones básicos
-    const textObjects: string[] = [];
-    const lines = text.split('\n');
-    
-    for (const line of lines) {
-      // Buscar texto entre paréntesis o corchetes (formato común en PDF)
-      const textMatches = line.match(/\((.*?)\)/g) || line.match(/\[(.*?)\]/g);
-      if (textMatches) {
-        for (const match of textMatches) {
-          const cleanText = match.replace(/[()[\]]/g, '').trim();
-          if (cleanText.length > 3 && /[a-zA-Z]/.test(cleanText)) {
-            textObjects.push(cleanText);
-          }
-        }
-      }
-      
-      // También buscar texto plano legible
-      const plainText = line.replace(/[^\x20-\x7E]/g, ' ').trim();
-      if (plainText.length > 10 && /[a-zA-Z].*[a-zA-Z]/.test(plainText)) {
-        textObjects.push(plainText);
+    // Convertir a string para buscar patrones de texto
+    let text = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      // Solo mantener caracteres ASCII imprimibles
+      if (uint8Array[i] >= 32 && uint8Array[i] <= 126) {
+        text += String.fromCharCode(uint8Array[i]);
+      } else if (uint8Array[i] === 10 || uint8Array[i] === 13) {
+        text += ' '; // Convertir saltos de línea en espacios
+      } else {
+        text += ' '; // Otros caracteres no imprimibles como espacios
       }
     }
     
-    const extractedText = textObjects.join(' ').replace(/\s+/g, ' ').trim();
-    console.log(`PDF extraction result: ${extractedText.length} characters`);
+    // Buscar patrones de texto entre operadores PDF comunes
+    const textMatches = [];
     
-    if (extractedText.length < 10) {
-      throw new Error("Could not extract meaningful text from PDF");
+    // Patrón 1: Texto entre paréntesis (formato más común en PDF)
+    const parenthesesPattern = /\(([^)]{10,}?)\)/g;
+    let match;
+    while ((match = parenthesesPattern.exec(text)) !== null) {
+      const content = match[1].trim();
+      if (content.length > 5 && /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(content)) {
+        textMatches.push(content);
+      }
+    }
+    
+    // Patrón 2: Texto después de operadores 'Tj' o 'TJ'
+    const tjPattern = /\s([a-zA-ZáéíóúñÁÉÍÓÚÑ][^()]{5,}?)\s+(Tj|TJ)/g;
+    while ((match = tjPattern.exec(text)) !== null) {
+      const content = match[1].trim();
+      if (content.length > 5) {
+        textMatches.push(content);
+      }
+    }
+    
+    // Patrón 3: Buscar secuencias de palabras legibles
+    const wordPattern = /\b[a-zA-ZáéíóúñÁÉÍÓÚÑ]{3,}(?:\s+[a-zA-ZáéíóúñÁÉÍÓÚÑ]{3,}){2,}/g;
+    while ((match = wordPattern.exec(text)) !== null) {
+      const content = match[0].trim();
+      if (content.length > 10) {
+        textMatches.push(content);
+      }
+    }
+    
+    // Combinar y limpiar texto extraído
+    const extractedText = textMatches
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[^\w\sáéíóúñÁÉÍÓÚÑ.,;:¿?¡!()-]/g, ' ')
+      .trim();
+    
+    console.log(`PDF extraction result: ${extractedText.length} characters`);
+    console.log(`PDF sample text: ${extractedText.substring(0, 200)}...`);
+    
+    if (extractedText.length < 50) {
+      throw new Error("No se pudo extraer texto significativo del PDF");
     }
     
     return extractedText;
