@@ -213,8 +213,8 @@ export const useDocuments = () => {
         .download(filePath);
       if (error) throw error;
 
-      // `data` es Response → Blob
-      const blob = await data.blob();
+      // `data` is already a Blob
+      const blob = data;
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href = url;
