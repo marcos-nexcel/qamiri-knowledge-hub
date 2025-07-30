@@ -315,51 +315,65 @@ async function extractPdf(blob: Blob): Promise<string> {
   }
 }
 
-// ── DOCX (método simplificado sin DOMParser) ───────────────────────────────
+// ── DOCX (método mejorado sin DOMParser) ───────────────────────────────────
 async function extractDocx(blob: Blob): Promise<string> {
   try {
-    console.log("Attempting DOCX text extraction...");
+    console.log("Attempting DOCX text extraction with JSZip...");
+    
+    // Import JSZip dynamically
+    const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
     
     const arrayBuffer = await blob.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const text = new TextDecoder('utf-8', { ignoreBOM: true }).decode(uint8Array);
+    const zip = await JSZip.loadAsync(arrayBuffer);
     
-    // Buscar contenido de texto entre tags XML típicos de DOCX
+    // Get the main document XML file
+    const documentXml = zip.file("word/document.xml");
+    if (!documentXml) {
+      throw new Error("word/document.xml not found in DOCX file");
+    }
+    
+    const xmlContent = await documentXml.async("string");
+    console.log(`Extracted XML content: ${xmlContent.length} characters`);
+    
+    // Extract text using regex patterns instead of DOMParser
     const textNodes: string[] = [];
     
-    // Patrón para encontrar texto en tags w:t
-    const xmlTextPattern = /<w:t[^>]*>(.*?)<\/w:t>/g;
+    // Pattern for text content in w:t tags
+    const textPattern = /<w:t[^>]*>([^<]*)<\/w:t>/g;
     let match;
     
-    while ((match = xmlTextPattern.exec(text)) !== null) {
+    while ((match = textPattern.exec(xmlContent)) !== null) {
       const textContent = match[1]
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&amp;/g, '&')
         .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
         .trim();
       
-      if (textContent.length > 0) {
+      if (textContent && textContent.length > 0) {
         textNodes.push(textContent);
       }
     }
     
-    // Si no encontramos nada con el patrón XML, buscar texto legible
-    if (textNodes.length === 0) {
-      const readableText = text
-        .replace(/<[^>]*>/g, ' ') // Remover tags XML
-        .replace(/[^\x20-\x7E\n\r\t]/g, ' ') // Mantener solo caracteres imprimibles
+    // Also try to extract from w:p (paragraph) content
+    const paragraphPattern = /<w:p[^>]*>(.*?)<\/w:p>/gs;
+    let pMatch;
+    
+    while ((pMatch = paragraphPattern.exec(xmlContent)) !== null) {
+      const paragraphContent = pMatch[1];
+      // Extract just text, ignoring other XML tags
+      const textInParagraph = paragraphContent
+        .replace(/<[^>]*>/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       
-      // Buscar oraciones completas
-      const sentences = readableText.match(/[A-Z][^.!?]*[.!?]/g);
-      if (sentences && sentences.length > 0) {
-        textNodes.push(...sentences);
+      if (textInParagraph && textInParagraph.length > 3) {
+        textNodes.push(textInParagraph);
       }
     }
     
-    const extractedText = textNodes.join(' ').trim();
+    const extractedText = textNodes.join(' ').replace(/\s+/g, ' ').trim();
     console.log(`DOCX extraction result: ${extractedText.length} characters`);
     
     if (extractedText.length < 10) {

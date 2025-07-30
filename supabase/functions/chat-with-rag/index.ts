@@ -63,8 +63,8 @@ serve(async (req) => {
       'search_similar_documents',
       {
         query_embedding: queryEmbedding,
-        match_threshold: 0.7,
-        match_count: 5,
+        match_threshold: 0.5, // Lowered threshold from 0.7 to 0.5
+        match_count: 10, // Increased from 5 to 10
         category_filter: categoryId
       }
     );
