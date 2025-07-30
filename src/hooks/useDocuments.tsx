@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
 import { toast } from 'sonner';
 
+// ────── Tipos ────────────────────────────────────────────────────────────────
 export interface Document {
   id: string;
   category_id: string;
@@ -28,37 +29,41 @@ export interface Category {
   is_active: boolean;
 }
 
+// ────── Hook ────────────────────────────────────────────────────────────────
 export const useDocuments = () => {
+  // State
   const [documents, setDocuments] = useState<Document[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Auth
   const { user } = useAuth();
 
-  // Load documents and categories
-  const loadData = async () => {
+  // ─── Cargar datos (memoizado) ─────────────────────────────────────────────
+  const loadData = useCallback(async () => {
     if (!user) return;
 
     try {
       setLoading(true);
 
-      // Load categories
-      const { data: categoriesData, error: categoriesError } = await supabase
+      // 1) Categorías
+      const { data: cats, error: catErr } = await supabase
         .from('categories')
         .select('*')
         .eq('is_active', true)
         .order('name');
 
-      if (categoriesError) {
-        console.error('Error loading categories:', categoriesError);
+      if (catErr) {
+        console.error(catErr);
         toast.error('Error al cargar categorías');
       } else {
-        setCategories(categoriesData || []);
+        setCategories(cats ?? []);
       }
 
-      // Load documents with category info
-      const { data: documentsData, error: documentsError } = await supabase
+      // 2) Documentos + nombre de categoría
+      const { data: docs, error: docErr } = await supabase
         .from('documents')
         .select(`
           *,
@@ -66,21 +71,21 @@ export const useDocuments = () => {
         `)
         .order('created_at', { ascending: false });
 
-      if (documentsError) {
-        console.error('Error loading documents:', documentsError);
+      if (docErr) {
+        console.error(docErr);
         toast.error('Error al cargar documentos');
       } else {
-        setDocuments((documentsData || []) as Document[]);
+        setDocuments(docs as Document[]);
       }
-    } catch (error) {
-      console.error('Error loading data:', error);
+    } catch (e) {
+      console.error(e);
       toast.error('Error al cargar datos');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
-  // Upload document
+  // ─── Subir documento ──────────────────────────────────────────────────────
   const uploadDocument = async (file: File, categoryId: string): Promise<boolean> => {
     if (!user) {
       toast.error('Usuario no autenticado');
@@ -91,42 +96,21 @@ export const useDocuments = () => {
       setUploading(true);
       setUploadProgress(0);
 
-      // Validate file type - now supports PDF, DOCX, DOC, and text files
-      const allowedTypes = [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
-        'application/msword', // DOC
-        'text/plain'
-      ];
-      
-      if (!allowedTypes.includes(file.type)) {
-        throw new Error('Tipo de archivo no soportado. Solo se permiten archivos PDF, DOCX, DOC y de texto.');
-      }
-      
-      // Validate file size (max 50MB)
-      const maxSize = 50 * 1024 * 1024; // 50MB
-      if (file.size > maxSize) {
-        throw new Error('Archivo demasiado grande. El tamaño máximo es 50MB.');
-      }
-
-      // Generate unique file path
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      // Nombre/ubicación únicos
+      const ext = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${crypto.randomUUID()}.${ext}`;
       const filePath = `${categoryId}/${fileName}`;
 
-      // Upload file to storage
-      const { error: uploadError } = await supabase.storage
+      // 1) Subir a Storage
+      const { error: uploadErr } = await supabase.storage
         .from('documents')
         .upload(filePath, file);
 
-      if (uploadError) {
-        throw uploadError;
-      }
+      if (uploadErr) throw uploadErr;
+      setUploadProgress(50);          // indicador aproximado
 
-      setUploadProgress(50);
-
-      // Create document record
-      const { data: documentData, error: docError } = await supabase
+      // 2) Insertar registro
+      const { data: doc, error: docErr } = await supabase
         .from('documents')
         .insert({
           category_id: categoryId,
@@ -135,36 +119,26 @@ export const useDocuments = () => {
           file_size: file.size,
           file_type: file.type || 'application/octet-stream',
           uploaded_by: user.id,
-          status: 'pending'
+          status: 'pending',
         })
         .select()
         .single();
 
-      if (docError) {
-        throw docError;
-      }
-
+      if (docErr) throw docErr;
       setUploadProgress(75);
 
-      // Trigger document processing
-      const { error: processError } = await supabase.functions.invoke('process-document', {
-        body: { documentId: documentData.id }
+      // 3) Lanzar función de procesamiento
+      const { error: procErr } = await supabase.functions.invoke('process-document', {
+        body: { documentId: doc.id },
       });
-
-      if (processError) {
-        console.error('Error triggering document processing:', processError);
-        // Don't throw here - document is uploaded, processing can be retried
-      }
+      if (procErr) console.error('Process‑document error:', procErr);
 
       setUploadProgress(100);
-      toast.success('Documento subido exitosamente');
-      
-      // Reload documents
+      toast.success('Documento subido correctamente');
       await loadData();
-      
       return true;
-    } catch (error) {
-      console.error('Error uploading document:', error);
+    } catch (e) {
+      console.error(e);
       toast.error('Error al subir documento');
       return false;
     } finally {
@@ -173,153 +147,141 @@ export const useDocuments = () => {
     }
   };
 
-  // Delete document
+  // ─── Eliminar documento ───────────────────────────────────────────────────
   const deleteDocument = async (documentId: string): Promise<boolean> => {
     try {
-      // Get document info first
-      const { data: document, error: getError } = await supabase
+      // 1) Localiza el path
+      const { data: doc, error: getErr } = await supabase
         .from('documents')
         .select('file_path')
         .eq('id', documentId)
         .single();
+      if (getErr) throw getErr;
 
-      if (getError) {
-        throw getError;
-      }
-
-      // Delete from storage
-      const { error: storageError } = await supabase.storage
+      // 2) Borra archivo de Storage
+      const { error: storageErr } = await supabase.storage
         .from('documents')
-        .remove([document.file_path]);
+        .remove([doc.file_path]);
+      if (storageErr) console.error('Storage delete:', storageErr);
 
-      if (storageError) {
-        console.error('Error deleting file from storage:', storageError);
-        // Continue with database deletion even if storage fails
-      }
-
-      // Delete document record (this will cascade to chunks)
-      const { error: deleteError } = await supabase
+      // 3) Borra registro (y chunks si hay FK‑cascade)
+      const { error: delErr } = await supabase
         .from('documents')
         .delete()
         .eq('id', documentId);
-
-      if (deleteError) {
-        throw deleteError;
-      }
+      if (delErr) throw delErr;
 
       toast.success('Documento eliminado');
       await loadData();
       return true;
-    } catch (error) {
-      console.error('Error deleting document:', error);
+    } catch (e) {
+      console.error(e);
       toast.error('Error al eliminar documento');
       return false;
     }
   };
 
-  // Reprocess document
+  // ─── Reprocesar documento ────────────────────────────────────────────────
   const reprocessDocument = async (documentId: string): Promise<boolean> => {
     try {
-      // Update status to pending
-      const { error: updateError } = await supabase
+      const { error: updErr } = await supabase
         .from('documents')
         .update({ status: 'pending' })
         .eq('id', documentId);
+      if (updErr) throw updErr;
 
-      if (updateError) {
-        throw updateError;
-      }
-
-      // Trigger processing
-      const { error: processError } = await supabase.functions.invoke('process-document', {
-        body: { documentId }
+      const { error: procErr } = await supabase.functions.invoke('process-document', {
+        body: { documentId },
       });
-
-      if (processError) {
-        throw processError;
-      }
+      if (procErr) throw procErr;
 
       toast.success('Reprocesamiento iniciado');
       await loadData();
       return true;
-    } catch (error) {
-      console.error('Error reprocessing document:', error);
+    } catch (e) {
+      console.error(e);
       toast.error('Error al reprocesar documento');
       return false;
     }
   };
 
-  // Download document
+  // ─── Descargar documento ─────────────────────────────────────────────────
   const downloadDocument = async (filePath: string, fileName: string) => {
     try {
       const { data, error } = await supabase.storage
         .from('documents')
         .download(filePath);
+      if (error) throw error;
 
-      if (error) {
-        throw error;
-      }
-
-      // Create download link
-      const url = URL.createObjectURL(data);
-      const a = document.createElement('a');
+      // `data` es Response → Blob
+      const blob = await data.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
       a.href = url;
       a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error downloading document:', error);
+    } catch (e) {
+      console.error(e);
       toast.error('Error al descargar documento');
     }
   };
 
-  // Search documents using embeddings
+  // ─── Buscar con embeddings ───────────────────────────────────────────────
   const searchDocuments = async (query: string, categoryId?: string) => {
     try {
-      // First, generate embedding for the query
-      const { data: embedding, error: embeddingError } = await supabase.functions.invoke('generate-embedding', {
-        body: { text: query }
-      });
+      // 1) Embedding de la query
+      const { data: embResp, error: embErr } = await supabase.functions.invoke(
+        'generate-embedding',
+        { body: { text: query } },
+      );
+      if (embErr) throw embErr;
 
-      if (embeddingError) {
-        throw embeddingError;
-      }
+      const { embedding } = embResp ?? {};
+      if (!embedding) throw new Error('Sin embedding en la respuesta');
 
-      // Search similar documents
-      const { data: results, error: searchError } = await supabase.rpc('search_similar_documents', {
-        query_embedding: embedding,
-        match_threshold: 0.7,
-        match_count: 20,
-        category_filter: categoryId || null
-      });
+      // 2) RPC en Postgres
+      const { data: results, error: searchErr } = await supabase.rpc(
+        'search_similar_documents',
+        {
+          query_embedding: embedding,
+          match_threshold: 0.7,
+          match_count: 20,
+          category_filter: categoryId ?? null,
+        },
+      );
+      if (searchErr) throw searchErr;
 
-      if (searchError) {
-        throw searchError;
-      }
-
-      return results || [];
-    } catch (error) {
-      console.error('Error searching documents:', error);
+      return results ?? [];
+    } catch (e) {
+      console.error(e);
       toast.error('Error en la búsqueda');
       return [];
     }
   };
 
+  // ─── Efecto inicial ──────────────────────────────────────────────────────
   useEffect(() => {
     loadData();
-  }, [user]);
+  }, [loadData]);
 
+  // ─── API que expone el hook ──────────────────────────────────────────────
   return {
+    // datos
     documents,
     categories,
     loading,
+
+    // estado de subida
     uploading,
     uploadProgress,
+
+    // acciones
     uploadDocument,
     deleteDocument,
     reprocessDocument,
     downloadDocument,
     searchDocuments,
-    refreshData: loadData
+    refreshData: loadData,
   };
 };
