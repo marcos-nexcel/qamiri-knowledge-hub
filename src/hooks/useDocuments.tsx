@@ -91,6 +91,24 @@ export const useDocuments = () => {
       setUploading(true);
       setUploadProgress(0);
 
+      // Validate file type - now supports PDF, DOCX, DOC, and text files
+      const allowedTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+        'application/msword', // DOC
+        'text/plain'
+      ];
+      
+      if (!allowedTypes.includes(file.type)) {
+        throw new Error('Tipo de archivo no soportado. Solo se permiten archivos PDF, DOCX, DOC y de texto.');
+      }
+      
+      // Validate file size (max 50MB)
+      const maxSize = 50 * 1024 * 1024; // 50MB
+      if (file.size > maxSize) {
+        throw new Error('Archivo demasiado grande. El tamaño máximo es 50MB.');
+      }
+
       // Generate unique file path
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
