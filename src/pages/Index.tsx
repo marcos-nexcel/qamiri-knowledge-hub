@@ -1,12 +1,17 @@
 import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useDocuments } from '@/hooks/useDocuments';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, LogOut, Settings, MessageSquare } from 'lucide-react';
+import ChatInterface from '@/components/chat/ChatInterface';
+import { useState } from 'react';
 
 const Index = () => {
   const { user, profile, loading, signOut, isAdmin } = useAuth();
+  const { categories } = useDocuments();
+  const [showChat, setShowChat] = useState(false);
 
   if (loading) {
     return (
@@ -58,8 +63,12 @@ const Index = () => {
               <p className="text-muted-foreground mb-4">
                 Interactúa con el chatbot basado en conocimiento de categorías específicas.
               </p>
-              <Button className="w-full" disabled>
-                Próximamente
+              <Button 
+                className="w-full" 
+                onClick={() => setShowChat(true)}
+                disabled={!categories || categories.length === 0}
+              >
+                {categories && categories.length > 0 ? 'Iniciar Chat' : 'Sin categorías disponibles'}
               </Button>
             </CardContent>
           </Card>
@@ -116,6 +125,14 @@ const Index = () => {
           </p>
         </div>
       </main>
+
+      {/* Chat Interface */}
+      {showChat && (
+        <ChatInterface 
+          categories={categories || []} 
+          onClose={() => setShowChat(false)} 
+        />
+      )}
     </div>
   );
 };
