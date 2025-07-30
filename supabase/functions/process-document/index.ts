@@ -1,6 +1,12 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
+
+// Configure PDF.js worker for Deno environment
+globalThis.GlobalWorkerOptions = {
+  workerSrc: 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.worker.mjs'
+};
+
 import { getDocument } from 'https://esm.sh/pdfjs-dist@4.0.379/build/pdf.mjs';
 
 const corsHeaders = {

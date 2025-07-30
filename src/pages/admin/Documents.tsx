@@ -119,6 +119,24 @@ export const AdminDocuments = () => {
   const processingDocuments = documents.filter(d => d.status === 'processing').length;
   const totalStorage = documents.reduce((acc, doc) => acc + doc.file_size, 0);
 
+  const handleReindexAll = async () => {
+    try {
+      const documentsToReprocess = documents.filter(doc => doc.status === 'processed' || doc.status === 'error');
+      
+      for (const doc of documentsToReprocess) {
+        await reprocessDocument(doc.id);
+      }
+      
+      toast.success(`Iniciando reindexación de ${documentsToReprocess.length} documentos`);
+    } catch (error) {
+      toast.error('Error al iniciar la reindexación');
+    }
+  };
+
+  const handleClearIndex = async () => {
+    toast.info('Funcionalidad en desarrollo: Limpiar índices');
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -377,11 +395,15 @@ export const AdminDocuments = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <Button className="w-full bg-admin-primary hover:bg-admin-primary-dark">
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                  <Button 
+                    className="w-full bg-admin-primary hover:bg-admin-primary-dark"
+                    onClick={handleReindexAll}
+                    disabled={loading}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                     Reindexar Todo
                   </Button>
-                  <Button variant="outline" className="w-full">
+                  <Button variant="outline" className="w-full" onClick={handleClearIndex}>
                     Limpiar Índices
                   </Button>
                 </div>
@@ -399,33 +421,47 @@ export const AdminDocuments = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-sm">Cola de Procesamiento</span>
-                    <span className="text-sm font-medium">12 documentos</span>
+                    <span className="text-sm font-medium">{processingDocuments} documentos</span>
                   </div>
-                  <Progress value={65} />
+                  <Progress value={processingDocuments > 0 ? 50 : 0} />
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-sm">Memoria Utilizada</span>
-                    <span className="text-sm font-medium">2.3 / 4.0 GB</span>
+                    <span className="text-sm">Documentos Procesados</span>
+                    <span className="text-sm font-medium">{documents.filter(d => d.status === 'processed').length} / {totalDocuments}</span>
                   </div>
-                  <Progress value={57} />
+                  <Progress value={totalDocuments > 0 ? (documents.filter(d => d.status === 'processed').length / totalDocuments) * 100 : 0} />
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-sm">Índices Creados</span>
-                    <span className="text-sm font-medium">89%</span>
+                    <span className="text-sm">Chunks Totales</span>
+                    <span className="text-sm font-medium">{documents.reduce((acc, doc) => acc + (doc.chunk_count || 0), 0)} chunks</span>
                   </div>
-                  <Progress value={89} />
+                  <Progress value={100} />
                 </div>
 
                 <div className="pt-4 space-y-2">
                   <div className="text-sm font-medium">Últimas Actividades:</div>
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    <div>• Manual de Procedimientos.pdf - Procesado</div>
-                    <div>• Políticas de Seguridad.docx - En proceso</div>
-                    <div>• Reporte Q4.xlsx - Indexando</div>
+                  <div className="space-y-1 text-xs text-muted-foreground max-h-32 overflow-y-auto">
+                    {documents
+                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                      .slice(0, 5)
+                      .map((doc) => (
+                        <div key={doc.id} className="flex justify-between">
+                          <span>• {doc.name.length > 25 ? doc.name.substring(0, 25) + '...' : doc.name}</span>
+                          <span className={
+                            doc.status === 'processed' ? 'text-green-600' :
+                            doc.status === 'processing' ? 'text-yellow-600' :
+                            doc.status === 'error' ? 'text-red-600' : 'text-gray-600'
+                          }>
+                            {doc.status === 'processed' ? 'Procesado' :
+                             doc.status === 'processing' ? 'Procesando' :
+                             doc.status === 'error' ? 'Error' : 'Pendiente'}
+                          </span>
+                        </div>
+                      ))}
                   </div>
                 </div>
               </CardContent>
