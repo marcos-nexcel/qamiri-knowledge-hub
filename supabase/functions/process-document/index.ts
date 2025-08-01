@@ -63,8 +63,8 @@ serve(async (req) => {
       throw new Error("No meaningful text could be extracted from the document");
     }
 
-    // 5️⃣  Divide y vectoriza
-    const chunks = splitText(fileText, 1000, 100);
+    // 5️⃣  Divide y vectoriza con estrategia inteligente
+    const chunks = createIntelligentChunks(fileText, document.file_type);
     console.log(`Created ${chunks.length} chunks`);
 
     if (chunks.length === 0) {
@@ -180,39 +180,120 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function splitText(text: string, size: number, overlap: number) {
+// ─── Chunking inteligente por tipo de documento ────────────────────────────
+function createIntelligentChunks(text: string, mimeType: string): string[] {
   const clean = text
     .replace(/\u0000/g, "")
     .replace(/[\x00-\x1F\x7F]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-    
-  if (clean.length <= size) {
+
+  // Configuración por tipo de documento
+  const chunkConfig = getChunkConfigByType(mimeType);
+  
+  if (clean.length <= chunkConfig.size) {
     return [clean];
   }
+
+  // Para CSV y Excel, chunking por filas
+  if (mimeType.includes('csv') || mimeType.includes('spreadsheet') || mimeType.includes('excel')) {
+    return chunkCsvOrExcel(clean, chunkConfig);
+  }
+  
+  // Para presentaciones, chunking por slides
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) {
+    return chunkPresentation(clean, chunkConfig);
+  }
+  
+  // Para documentos de texto tradicionales
+  return chunkTextDocument(clean, chunkConfig);
+}
+
+function getChunkConfigByType(mimeType: string) {
+  if (mimeType.includes('csv') || mimeType.includes('spreadsheet') || mimeType.includes('excel')) {
+    return { size: 1500, overlap: 50 }; // Chunks más grandes para datos tabulares
+  }
+  
+  if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) {
+    return { size: 800, overlap: 100 }; // Chunks medianos para slides
+  }
+  
+  return { size: 1000, overlap: 100 }; // Configuración estándar
+}
+
+function chunkCsvOrExcel(text: string, config: { size: number; overlap: number }): string[] {
+  const lines = text.split(/[\r\n]+/).filter(line => line.trim().length > 0);
+  const chunks: string[] = [];
+  
+  // Mantener headers en cada chunk si es posible
+  const headers = lines.length > 0 ? lines[0] : '';
+  const dataLines = lines.slice(1);
+  
+  let currentChunk = headers;
+  
+  for (const line of dataLines) {
+    const testChunk = currentChunk + '\n' + line;
     
+    if (testChunk.length > config.size && currentChunk !== headers) {
+      chunks.push(currentChunk.trim());
+      currentChunk = headers + '\n' + line; // Nuevo chunk con headers
+    } else {
+      currentChunk = testChunk;
+    }
+  }
+  
+  if (currentChunk.trim().length > 0) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks.filter(chunk => chunk.length > 50);
+}
+
+function chunkPresentation(text: string, config: { size: number; overlap: number }): string[] {
+  // Dividir por slides si hay marcadores
+  const slideParts = text.split(/--- Slide \d+ ---/);
+  const chunks: string[] = [];
+  
+  for (let i = 0; i < slideParts.length; i++) {
+    const slidePart = slideParts[i].trim();
+    if (slidePart.length > 0) {
+      if (slidePart.length <= config.size) {
+        chunks.push(slidePart);
+      } else {
+        // Si un slide es muy largo, dividirlo normalmente
+        chunks.push(...chunkTextDocument(slidePart, config));
+      }
+    }
+  }
+  
+  return chunks.filter(chunk => chunk.length > 50);
+}
+
+function chunkTextDocument(text: string, config: { size: number; overlap: number }): string[] {
   const out: string[] = [];
-  for (let start = 0; start < clean.length;) {
-    let end = Math.min(start + size, clean.length);
+  
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(start + config.size, text.length);
     
     // Buscar un punto de corte natural
-    if (end < clean.length) {
-      const lastSpace = clean.lastIndexOf(" ", end);
-      const lastPeriod = clean.lastIndexOf(".", end);
-      const cutPoint = Math.max(lastSpace, lastPeriod);
+    if (end < text.length) {
+      const lastSpace = text.lastIndexOf(" ", end);
+      const lastPeriod = text.lastIndexOf(".", end);
+      const lastNewline = text.lastIndexOf("\n", end);
+      const cutPoint = Math.max(lastSpace, lastPeriod, lastNewline);
       
       if (cutPoint > start + 100) {
         end = cutPoint + 1;
       }
     }
     
-    const chunk = clean.slice(start, end).trim();
-    if (chunk.length > 50) { // Solo chunks significativos
+    const chunk = text.slice(start, end).trim();
+    if (chunk.length > 50) {
       out.push(chunk);
     }
     
-    if (end === clean.length) break;
-    start = end - overlap;
+    if (end === text.length) break;
+    start = end - config.overlap;
   }
   
   return out.filter(chunk => chunk.length > 0);
@@ -263,6 +344,18 @@ async function extractText(blob: Blob, mime: string): Promise<string> {
       return extractDoc(blob);
     case "text/plain":
       return extractTxt(blob);
+    case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      return extractXlsx(blob);
+    case "application/vnd.ms-excel":
+    case "application/x-ms-excel":
+      return extractXls(blob);
+    case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+      return extractPptx(blob);
+    case "application/vnd.ms-powerpoint":
+      return extractPpt(blob);
+    case "text/csv":
+    case "application/csv":
+      return extractCsv(blob);
     default:
       console.warn(`Unsupported file type: ${mime}, trying text extraction`);
       return extractTxt(blob);
@@ -473,5 +566,338 @@ async function extractTxt(blob: Blob): Promise<string> {
   } catch (error) {
     console.error('Error extracting TXT text:', error);
     throw new Error(`TXT extraction failed: ${error.message}`);
+  }
+}
+
+// ── XLSX (Excel 2007+) ──────────────────────────────────────────────────────
+async function extractXlsx(blob: Blob): Promise<string> {
+  try {
+    console.log("Attempting XLSX text extraction...");
+    
+    const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+    
+    const arrayBuffer = await blob.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    
+    // Extraer strings compartidas
+    const sharedStringsFile = zip.file("xl/sharedStrings.xml");
+    const sharedStrings: string[] = [];
+    
+    if (sharedStringsFile) {
+      const sharedStringsXml = await sharedStringsFile.async("string");
+      const stringPattern = /<t[^>]*>([^<]*)<\/t>/g;
+      let match;
+      while ((match = stringPattern.exec(sharedStringsXml)) !== null) {
+        sharedStrings.push(match[1]
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+        );
+      }
+    }
+    
+    // Procesar hojas de trabajo
+    const workbookFile = zip.file("xl/workbook.xml");
+    const allText: string[] = [];
+    
+    if (workbookFile) {
+      const workbookXml = await workbookFile.async("string");
+      const sheetPattern = /<sheet[^>]*name="([^"]*)"[^>]*r:id="([^"]*)"[^>]*\/>/g;
+      let sheetMatch;
+      
+      while ((sheetMatch = sheetPattern.exec(workbookXml)) !== null) {
+        const sheetName = sheetMatch[1];
+        console.log(`Processing sheet: ${sheetName}`);
+        
+        // Buscar archivo de hoja correspondiente
+        const worksheetFiles = Object.keys(zip.files).filter(name => 
+          name.startsWith("xl/worksheets/sheet") && name.endsWith(".xml")
+        );
+        
+        for (const worksheetPath of worksheetFiles) {
+          const worksheetFile = zip.file(worksheetPath);
+          if (worksheetFile) {
+            const worksheetXml = await worksheetFile.async("string");
+            
+            // Extraer valores de celdas
+            const cellPattern = /<c[^>]*r="[^"]*"[^>]*(?:t="s"[^>]*)?><v>([^<]*)<\/v><\/c>/g;
+            const inlineStringPattern = /<c[^>]*r="[^"]*"[^>]*><is><t>([^<]*)<\/t><\/is><\/c>/g;
+            
+            let cellMatch;
+            const rowData: string[] = [];
+            
+            // Valores con referencia a string compartida
+            while ((cellMatch = cellPattern.exec(worksheetXml)) !== null) {
+              const value = cellMatch[1];
+              const numValue = parseInt(value);
+              if (!isNaN(numValue) && sharedStrings[numValue]) {
+                rowData.push(sharedStrings[numValue]);
+              } else {
+                rowData.push(value);
+              }
+            }
+            
+            // Strings inline
+            while ((cellMatch = inlineStringPattern.exec(worksheetXml)) !== null) {
+              rowData.push(cellMatch[1]);
+            }
+            
+            if (rowData.length > 0) {
+              allText.push(`Hoja: ${sheetName}`, ...rowData);
+            }
+          }
+        }
+      }
+    }
+    
+    const extractedText = allText.join(' ').replace(/\s+/g, ' ').trim();
+    console.log(`XLSX extraction result: ${extractedText.length} characters`);
+    
+    if (extractedText.length < 10) {
+      throw new Error("Could not extract meaningful text from XLSX");
+    }
+    
+    return extractedText;
+  } catch (error) {
+    console.error('Error extracting XLSX text:', error);
+    throw new Error(`XLSX extraction failed: ${error.message}`);
+  }
+}
+
+// ── XLS (Excel legacy) ──────────────────────────────────────────────────────
+async function extractXls(blob: Blob): Promise<string> {
+  try {
+    console.log("Attempting XLS text extraction...");
+    
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const text = new TextDecoder('latin1').decode(uint8Array);
+    
+    // XLS tiene estructura binaria BIFF, extraer strings legibles
+    const readableChunks: string[] = [];
+    const chunks = text.split(/[\x00-\x1F]+/);
+    
+    for (const chunk of chunks) {
+      const cleanChunk = chunk
+        .replace(/[\x7F-\xFF]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Solo mantener chunks que parezcan texto real
+      if (cleanChunk.length > 3 && /[a-zA-Z0-9]/.test(cleanChunk)) {
+        // Filtrar chunks que son solo símbolos o caracteres especiales
+        if (!/^[^\w\s]+$/.test(cleanChunk)) {
+          readableChunks.push(cleanChunk);
+        }
+      }
+    }
+    
+    const extractedText = readableChunks.join(' ').trim();
+    console.log(`XLS extraction result: ${extractedText.length} characters`);
+    
+    if (extractedText.length < 10) {
+      throw new Error("Could not extract meaningful text from XLS");
+    }
+    
+    return extractedText;
+  } catch (error) {
+    console.error('Error extracting XLS text:', error);
+    throw new Error(`XLS extraction failed: ${error.message}`);
+  }
+}
+
+// ── PPTX (PowerPoint 2007+) ─────────────────────────────────────────────────
+async function extractPptx(blob: Blob): Promise<string> {
+  try {
+    console.log("Attempting PPTX text extraction...");
+    
+    const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+    
+    const arrayBuffer = await blob.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    
+    const allText: string[] = [];
+    
+    // Buscar archivos de slides
+    const slideFiles = Object.keys(zip.files).filter(name => 
+      name.startsWith("ppt/slides/slide") && name.endsWith(".xml")
+    );
+    
+    for (const slidePath of slideFiles) {
+      const slideFile = zip.file(slidePath);
+      if (slideFile) {
+        const slideNumber = slidePath.match(/slide(\d+)\.xml/)?.[1] || '?';
+        console.log(`Processing slide ${slideNumber}`);
+        
+        const slideXml = await slideFile.async("string");
+        
+        // Extraer texto de elementos a:t (texto)
+        const textPattern = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+        let match;
+        const slideTexts: string[] = [`--- Slide ${slideNumber} ---`];
+        
+        while ((match = textPattern.exec(slideXml)) !== null) {
+          const textContent = match[1]
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+            .trim();
+          
+          if (textContent && textContent.length > 0) {
+            slideTexts.push(textContent);
+          }
+        }
+        
+        // También extraer de p:sp (shapes con texto)
+        const shapeTextPattern = /<p:sp[^>]*>(.*?)<\/p:sp>/gs;
+        let shapeMatch;
+        
+        while ((shapeMatch = shapeTextPattern.exec(slideXml)) !== null) {
+          const shapeContent = shapeMatch[1];
+          const innerTextPattern = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+          let innerMatch;
+          
+          while ((innerMatch = innerTextPattern.exec(shapeContent)) !== null) {
+            const textContent = innerMatch[1].trim();
+            if (textContent && textContent.length > 0) {
+              slideTexts.push(textContent);
+            }
+          }
+        }
+        
+        if (slideTexts.length > 1) {
+          allText.push(...slideTexts);
+        }
+      }
+    }
+    
+    const extractedText = allText.join(' ').replace(/\s+/g, ' ').trim();
+    console.log(`PPTX extraction result: ${extractedText.length} characters`);
+    
+    if (extractedText.length < 10) {
+      throw new Error("Could not extract meaningful text from PPTX");
+    }
+    
+    return extractedText;
+  } catch (error) {
+    console.error('Error extracting PPTX text:', error);
+    throw new Error(`PPTX extraction failed: ${error.message}`);
+  }
+}
+
+// ── PPT (PowerPoint legacy) ─────────────────────────────────────────────────
+async function extractPpt(blob: Blob): Promise<string> {
+  try {
+    console.log("Attempting PPT text extraction...");
+    
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const text = new TextDecoder('latin1').decode(uint8Array);
+    
+    // PPT tiene estructura binaria compleja, extraer texto legible
+    const readableChunks: string[] = [];
+    
+    // Buscar bloques de texto que parezcan slides
+    const chunks = text.split(/[\x00-\x1F]+/);
+    
+    for (const chunk of chunks) {
+      const cleanChunk = chunk
+        .replace(/[\x7F-\xFF]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Solo mantener chunks que parezcan texto real de presentación
+      if (cleanChunk.length > 5 && /[a-zA-Z].*[a-zA-Z]/.test(cleanChunk)) {
+        // Filtrar chunks que son solo símbolos o metadatos
+        if (!/^[^\w\s]+$/.test(cleanChunk) && 
+            !cleanChunk.includes('Microsoft') && 
+            !cleanChunk.includes('PowerPoint')) {
+          readableChunks.push(cleanChunk);
+        }
+      }
+    }
+    
+    const extractedText = readableChunks.join(' ').trim();
+    console.log(`PPT extraction result: ${extractedText.length} characters`);
+    
+    if (extractedText.length < 10) {
+      throw new Error("Could not extract meaningful text from PPT");
+    }
+    
+    return extractedText;
+  } catch (error) {
+    console.error('Error extracting PPT text:', error);
+    throw new Error(`PPT extraction failed: ${error.message}`);
+  }
+}
+
+// ── CSV ─────────────────────────────────────────────────────────────────────
+async function extractCsv(blob: Blob): Promise<string> {
+  try {
+    console.log("Attempting CSV text extraction...");
+    
+    // Intentar diferentes encodings
+    let csvText: string;
+    try {
+      csvText = new TextDecoder('utf-8').decode(await blob.arrayBuffer());
+    } catch {
+      csvText = new TextDecoder('latin1').decode(await blob.arrayBuffer());
+    }
+    
+    // Detectar delimitador
+    const commaCount = (csvText.match(/,/g) || []).length;
+    const semicolonCount = (csvText.match(/;/g) || []).length;
+    const tabCount = (csvText.match(/\t/g) || []).length;
+    
+    let delimiter = ',';
+    if (semicolonCount > commaCount && semicolonCount > tabCount) {
+      delimiter = ';';
+    } else if (tabCount > commaCount && tabCount > semicolonCount) {
+      delimiter = '\t';
+    }
+    
+    console.log(`Detected CSV delimiter: "${delimiter}"`);
+    
+    const lines = csvText.split(/[\r\n]+/).filter(line => line.trim().length > 0);
+    const processedRows: string[] = [];
+    
+    // Procesar máximo 1000 filas para evitar contenido excesivo
+    const maxRows = Math.min(lines.length, 1000);
+    
+    for (let i = 0; i < maxRows; i++) {
+      const line = lines[i];
+      const columns = line.split(delimiter).map(col => 
+        col.replace(/^["']|["']$/g, '').trim()
+      );
+      
+      // Solo incluir filas con contenido significativo
+      const meaningfulColumns = columns.filter(col => 
+        col.length > 0 && col !== delimiter
+      );
+      
+      if (meaningfulColumns.length > 0) {
+        if (i === 0) {
+          processedRows.push(`Cabeceras: ${meaningfulColumns.join(' | ')}`);
+        } else {
+          processedRows.push(`Fila ${i}: ${meaningfulColumns.join(' | ')}`);
+        }
+      }
+    }
+    
+    const extractedText = processedRows.join('\n').trim();
+    console.log(`CSV extraction result: ${extractedText.length} characters from ${maxRows} rows`);
+    
+    if (extractedText.length < 10) {
+      throw new Error("Could not extract meaningful text from CSV");
+    }
+    
+    return extractedText;
+  } catch (error) {
+    console.error('Error extracting CSV text:', error);
+    throw new Error(`CSV extraction failed: ${error.message}`);
   }
 }

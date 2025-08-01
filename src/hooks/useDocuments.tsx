@@ -85,10 +85,59 @@ export const useDocuments = () => {
     }
   }, [user]);
 
+  // ─── Tipos de archivo soportados ─────────────────────────────────────────
+  const SUPPORTED_MIME_TYPES = {
+    'application/pdf': { extensions: ['.pdf'], maxSize: 50 * 1024 * 1024 }, // 50MB
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': { extensions: ['.docx'], maxSize: 50 * 1024 * 1024 },
+    'application/msword': { extensions: ['.doc'], maxSize: 50 * 1024 * 1024 },
+    'text/plain': { extensions: ['.txt'], maxSize: 10 * 1024 * 1024 }, // 10MB
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': { extensions: ['.xlsx'], maxSize: 100 * 1024 * 1024 }, // 100MB
+    'application/vnd.ms-excel': { extensions: ['.xls'], maxSize: 100 * 1024 * 1024 },
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': { extensions: ['.pptx'], maxSize: 100 * 1024 * 1024 },
+    'application/vnd.ms-powerpoint': { extensions: ['.ppt'], maxSize: 100 * 1024 * 1024 },
+    'text/csv': { extensions: ['.csv'], maxSize: 50 * 1024 * 1024 },
+    'application/csv': { extensions: ['.csv'], maxSize: 50 * 1024 * 1024 }
+  };
+
+  // ─── Validar archivo antes de subir ──────────────────────────────────────
+  const validateFile = (file: File): { valid: boolean; error?: string } => {
+    // Verificar extensión
+    const extension = '.' + file.name.split('.').pop()?.toLowerCase();
+    const supportedType = Object.entries(SUPPORTED_MIME_TYPES).find(
+      ([mime, config]) => config.extensions.includes(extension)
+    );
+
+    if (!supportedType) {
+      return { 
+        valid: false, 
+        error: `Formato no soportado: ${extension}. Formatos válidos: PDF, DOC, DOCX, TXT, XLS, XLSX, PPT, PPTX, CSV` 
+      };
+    }
+
+    // Verificar tamaño
+    const [mimeType, config] = supportedType;
+    if (file.size > config.maxSize) {
+      const maxSizeMB = Math.round(config.maxSize / (1024 * 1024));
+      return { 
+        valid: false, 
+        error: `Archivo demasiado grande. Máximo ${maxSizeMB}MB para archivos ${extension}` 
+      };
+    }
+
+    return { valid: true };
+  };
+
   // ─── Subir documento ──────────────────────────────────────────────────────
   const uploadDocument = async (file: File, categoryId: string): Promise<boolean> => {
     if (!user) {
       toast.error('Usuario no autenticado');
+      return false;
+    }
+
+    // Validar archivo
+    const validation = validateFile(file);
+    if (!validation.valid) {
+      toast.error(validation.error!);
       return false;
     }
 

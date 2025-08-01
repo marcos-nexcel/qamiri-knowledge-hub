@@ -157,7 +157,7 @@ export const AdminDocuments = () => {
             <CardHeader>
               <CardTitle>Cargar Nuevos Documentos</CardTitle>
               <CardDescription>
-                Sube documentos PDF, Word, Excel o texto plano para procesamiento
+                Sube documentos en múltiples formatos: PDF, Word, Excel, PowerPoint, CSV y texto plano
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -176,13 +176,18 @@ export const AdminDocuments = () => {
                 <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <div className="space-y-2">
                   <h3 className="text-lg font-semibold">Arrastra archivos aquí</h3>
-                  <p className="text-muted-foreground">o haz clic para seleccionar archivos</p>
+                  <p className="text-muted-foreground">
+                    o haz clic para seleccionar archivos
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Formatos soportados: PDF, DOC, DOCX, TXT, XLS, XLSX, PPT, PPTX, CSV
+                  </p>
                 </div>
                 <Input
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.txt,.xls,.xlsx"
+                  accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.csv"
                   onChange={handleFileUpload}
                   className="mt-4"
                   disabled={!selectedUploadCategory}
