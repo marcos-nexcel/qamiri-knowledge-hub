@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.211.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const corsHeaders = {
@@ -363,76 +364,47 @@ async function extractText(blob: Blob, mime: string): Promise<string> {
 }
 
 // ── PDF (método completamente nuevo sin bibliotecas externas) ──────────────
-async function extractPdf(blob: Blob): Promise<string> {
-  try {
-    console.log("Attempting simple PDF text extraction...");
-    
-    const arrayBuffer = await blob.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Convertir a string para buscar patrones de texto
-    let text = '';
-    for (let i = 0; i < uint8Array.length; i++) {
-      // Solo mantener caracteres ASCII imprimibles
-      if (uint8Array[i] >= 32 && uint8Array[i] <= 126) {
-        text += String.fromCharCode(uint8Array[i]);
-      } else if (uint8Array[i] === 10 || uint8Array[i] === 13) {
-        text += ' '; // Convertir saltos de línea en espacios
-      } else {
-        text += ' '; // Otros caracteres no imprimibles como espacios
-      }
-    }
-    
-    // Buscar patrones de texto entre operadores PDF comunes
-    const textMatches = [];
-    
-    // Patrón 1: Texto entre paréntesis (formato más común en PDF)
-    const parenthesesPattern = /\(([^)]{10,}?)\)/g;
-    let match;
-    while ((match = parenthesesPattern.exec(text)) !== null) {
-      const content = match[1].trim();
-      if (content.length > 5 && /[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(content)) {
-        textMatches.push(content);
-      }
-    }
-    
-    // Patrón 2: Texto después de operadores 'Tj' o 'TJ'
-    const tjPattern = /\s([a-zA-ZáéíóúñÁÉÍÓÚÑ][^()]{5,}?)\s+(Tj|TJ)/g;
-    while ((match = tjPattern.exec(text)) !== null) {
-      const content = match[1].trim();
-      if (content.length > 5) {
-        textMatches.push(content);
-      }
-    }
-    
-    // Patrón 3: Buscar secuencias de palabras legibles
-    const wordPattern = /\b[a-zA-ZáéíóúñÁÉÍÓÚÑ]{3,}(?:\s+[a-zA-ZáéíóúñÁÉÍÓÚÑ]{3,}){2,}/g;
-    while ((match = wordPattern.exec(text)) !== null) {
-      const content = match[0].trim();
-      if (content.length > 10) {
-        textMatches.push(content);
-      }
-    }
-    
-    // Combinar y limpiar texto extraído
-    const extractedText = textMatches
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .replace(/[^\w\sáéíóúñÁÉÍÓÚÑ.,;:¿?¡!()-]/g, ' ')
-      .trim();
-    
-    console.log(`PDF extraction result: ${extractedText.length} characters`);
-    console.log(`PDF sample text: ${extractedText.substring(0, 200)}...`);
-    
-    if (extractedText.length < 50) {
-      throw new Error("No se pudo extraer texto significativo del PDF");
-    }
-    
-    return extractedText;
-  } catch (error) {
-    console.error('Error extracting PDF text:', error);
-    throw new Error(`PDF extraction failed: ${error.message}`);
+export async function extractPdf(
+  blob: Blob,
+  opts: { maxChars?: number } = {},
+): Promise<string[]> {
+  const { maxChars = 2_000 } = opts;
+
+  /* En navegador indica una vez la ruta del worker de PDF.js:
+     GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'; */
+
+  // 1) Cargar y parsear el PDF (incluye descompresión y decodificación)
+  const data = new Uint8Array(await blob.arrayBuffer());
+  const pdf = await getDocument({ data }).promise;                 // :contentReference[oaicite:0]{index=0}
+
+  // 2) Acumular texto página a página
+  let fullText = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const { items } = await page.getTextContent();
+    fullText += items.map(i => (i as any).str).join(' ') + '\n';
+
+    //  Evita bloquear el event-loop en PDFs gigantes
+    if (p % 10 === 0) await new Promise(r => setTimeout(r));
   }
+
+  // 3) Splitter: agrupa por frases hasta `maxChars`
+  const sentences = fullText
+    .replace(/\s+/g, ' ')            // normaliza espacios
+    .split(/(?<=[.!?¡¿])\s+/);       // separa por signos de puntuación
+
+  const chunks: string[] = [];
+  let current = '';
+  for (const s of sentences) {
+    if ((current + s).length > maxChars) {
+      chunks.push(current.trim());
+      current = '';
+    }
+    current += s + ' ';
+  }
+  if (current.trim()) chunks.push(current.trim());
+
+  return chunks;                                                         // :contentReference[oaicite:1]{index=1}
 }
 
 // ── DOCX (método mejorado sin DOMParser) ───────────────────────────────────
